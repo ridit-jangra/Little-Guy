@@ -9,6 +9,8 @@ from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
 from PySide6.QtGui import QCursor, QImage, QPixmap
 from PySide6.QtWidgets import QApplication, QLabel, QMenu
 
+from pixl_link import enable_pixl
+
 anims = ["idle", "idle-2", "walking-left", "walking-right", "jump"]
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
@@ -51,6 +53,7 @@ class LittleGuy(QLabel):
         self.walking = False
         self.held = False  # being dragged or falling
         self.walk_resume = None
+        self.menu_hooks = []
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.next_frame)
         self.play(anim)
@@ -75,6 +78,8 @@ class LittleGuy(QLabel):
 
     def contextMenuEvent(self, event):
         menu = QMenu(self)
+        for hook in self.menu_hooks:
+            hook(menu)
         menu.addAction("Quit", QApplication.quit)
         menu.exec(event.globalPos())
 
@@ -130,6 +135,8 @@ def follow_cursor(guy, still_ms=1500, dead_zone=40):
         pos = QCursor.pos()
         if guy.walking or guy.held:
             state["last"] = pos  # only look around while standing still
+            state["following"] = False
+            state["side"] = None
             return
         if pos == state["last"]:
             state["still_for"] += poll_ms
@@ -186,8 +193,7 @@ def wander(guy, speed=60, rest_s=(1, 3), min_walk=120, wave_chance=0.25):
         QTimer.singleShot(int(random.uniform(*rest_s) * 1000), start_walk)
 
     def start_walk():
-        if guy.held or not guy.timer.isActive():
-            # eyes are following the cursor; wait until he's back to idling
+        if guy.held:
             QTimer.singleShot(500, start_walk)
             return
         area = QApplication.primaryScreen().availableGeometry()
@@ -313,5 +319,6 @@ if __name__ == "__main__":
     follow_cursor(guy)
     wander(guy)
     enable_drag(guy)
+    link = enable_pixl(guy)
     guy.show()
     sys.exit(app.exec())

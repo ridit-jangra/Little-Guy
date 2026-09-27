@@ -2,3 +2,8 @@
 *.kra~
 
 __pycache__
+
+.mcp.json
+
+server/*.db
+server/.env
