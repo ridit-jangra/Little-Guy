@@ -5,7 +5,7 @@ import time
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
 from PySide6.QtGui import QCursor, QImage, QPixmap
 from PySide6.QtWidgets import QApplication, QLabel, QMenu
 
@@ -49,6 +49,8 @@ class LittleGuy(QLabel):
         self.index = 0
         self.anim = None
         self.walking = False
+        self.held = False  # being dragged or falling
+        self.walk_resume = None
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.next_frame)
         self.play(anim)
@@ -126,7 +128,7 @@ def follow_cursor(guy, still_ms=1500, dead_zone=40):
 
     def poll():
         pos = QCursor.pos()
-        if guy.walking:
+        if guy.walking or guy.held:
             state["last"] = pos  # only look around while standing still
             return
         if pos == state["last"]:
@@ -184,7 +186,7 @@ def wander(guy, speed=60, rest_s=(1, 3), min_walk=120, wave_chance=0.25):
         QTimer.singleShot(int(random.uniform(*rest_s) * 1000), start_walk)
 
     def start_walk():
-        if not guy.timer.isActive():
+        if guy.held or not guy.timer.isActive():
             # eyes are following the cursor; wait until he's back to idling
             QTimer.singleShot(500, start_walk)
             return
@@ -196,10 +198,16 @@ def wander(guy, speed=60, rest_s=(1, 3), min_walk=120, wave_chance=0.25):
         direction = "right" if target > guy.x() else "left"
         state.update(x=float(guy.x()), target=target, last=time.monotonic(), resume=guy.anim, dir=direction)
         guy.walking = True
+        guy.walk_resume = guy.anim
         play_grounded(guy, f"walking-{direction}-plain")
         mover.start(16)
 
     def step():
+        if not guy.walking:
+            # walk was cancelled (he got picked up)
+            mover.stop()
+            rest()
+            return
         now = time.monotonic()
         dist = speed * (now - state["last"])
         state["last"] = now
@@ -220,6 +228,83 @@ def wander(guy, speed=60, rest_s=(1, 3), min_walk=120, wave_chance=0.25):
     return mover
 
 
+class Dragger(QObject):
+    """Pick him up with the left mouse button; let go and he falls to the taskbar."""
+
+    GRAVITY = 2600  # px/s^2
+    BOUNCE = 0.25  # fraction of landing speed kept for the bounce
+    MIN_BOUNCE = 500  # px/s; softer landings just stop
+
+    def __init__(self, guy):
+        super().__init__(guy)
+        self.guy = guy
+        self.pose = load_sides()["bottom"]  # looks down while dangling
+        self.grab = QPoint()
+        self.y = 0.0
+        self.vy = 0.0
+        self.last = 0.0
+        self.faller = QTimer(self)
+        self.faller.timeout.connect(self.fall)
+        guy.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        t = event.type()
+        if t == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+            self.pick_up(event.globalPosition().toPoint())
+            return True
+        if t == QEvent.Type.MouseMove and self.guy.held and not self.faller.isActive():
+            self.guy.move(event.globalPosition().toPoint() - self.grab)
+            return True
+        if t == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton and self.guy.held:
+            self.drop()
+            return True
+        return False
+
+    def pick_up(self, pos):
+        guy = self.guy
+        self.faller.stop()
+        if guy.walking:
+            guy.walking = False
+            guy.play(guy.walk_resume)
+        guy.held = True
+        guy.timer.stop()
+        guy.setPixmap(self.pose)
+        guy.setCursor(Qt.CursorShape.ClosedHandCursor)
+        self.grab = pos - guy.pos()
+
+    def drop(self):
+        self.guy.unsetCursor()
+        area = QApplication.primaryScreen().availableGeometry()
+        x = min(max(self.guy.x(), area.left()), area.right() - self.guy.width())
+        self.guy.move(x, self.guy.y())
+        self.y, self.vy, self.last = float(self.guy.y()), 0.0, time.monotonic()
+        self.faller.start(16)
+
+    def fall(self):
+        guy = self.guy
+        now = time.monotonic()
+        dt, self.last = now - self.last, now
+        ground = QApplication.primaryScreen().availableGeometry().bottom() + 1 - guy.height()
+        self.vy += self.GRAVITY * dt
+        self.y += self.vy * dt
+        if self.y >= ground:
+            self.y = ground
+            if self.vy > self.MIN_BOUNCE:
+                self.vy = -self.vy * self.BOUNCE
+            else:
+                self.faller.stop()
+                guy.move(guy.x(), round(ground))
+                guy.held = False
+                guy.setPixmap(guy.frames[guy.index])
+                guy.timer.start()
+                return
+        guy.move(guy.x(), round(self.y))
+
+
+def enable_drag(guy):
+    return Dragger(guy)
+
+
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     app = QApplication(sys.argv)
@@ -227,5 +312,6 @@ if __name__ == "__main__":
     cycle_idles(guy)
     follow_cursor(guy)
     wander(guy)
+    enable_drag(guy)
     guy.show()
     sys.exit(app.exec())
