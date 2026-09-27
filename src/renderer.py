@@ -1,5 +1,7 @@
 import math
+import random
 import signal
+import time
 import sys
 from pathlib import Path
 
@@ -7,11 +9,11 @@ from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtGui import QCursor, QImage, QPixmap
 from PySide6.QtWidgets import QApplication, QLabel, QMenu
 
-anims = ["idle", "idle-2", "walk-left", "walk-right", "jump"]
+anims = ["idle", "idle-2", "walking-left", "walking-right", "jump"]
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
 SIZE = 72
-FPS = {"idle-2": 6}  # anything not listed plays at DEFAULT_FPS
+FPS = {"idle-2": 6, "walking-left": 7, "walking-right": 7, "walking-left-plain": 7, "walking-right-plain": 7}  # anything not listed plays at DEFAULT_FPS
 DEFAULT_FPS = 10
 
 
@@ -45,6 +47,8 @@ class LittleGuy(QLabel):
 
         self.frames = []
         self.index = 0
+        self.anim = None
+        self.walking = False
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.next_frame)
         self.play(anim)
@@ -58,6 +62,7 @@ class LittleGuy(QLabel):
             return
         self.frames = frames
         self.index = 0
+        self.anim = anim
         self.setPixmap(self.frames[0])
         self.resize(self.frames[0].size())
         self.timer.start(1000 // FPS.get(anim, DEFAULT_FPS))
@@ -78,7 +83,7 @@ def cycle_idles(guy, anims=("idle-2", "idle"), every_loops=5):
 
     def on_frame():
         # index just wrapped to 0: one full loop finished
-        if guy.index != 0:
+        if guy.walking or guy.index != 0:
             return
         state["loops"] += 1
         if state["loops"] < every_loops:
@@ -121,6 +126,9 @@ def follow_cursor(guy, still_ms=1500, dead_zone=40):
 
     def poll():
         pos = QCursor.pos()
+        if guy.walking:
+            state["last"] = pos  # only look around while standing still
+            return
         if pos == state["last"]:
             state["still_for"] += poll_ms
             if state["following"] and state["still_for"] >= still_ms:
@@ -150,11 +158,74 @@ def follow_cursor(guy, still_ms=1500, dead_zone=40):
     return poller
 
 
+def play_grounded(guy, anim):
+    bottom = guy.y() + guy.height()
+    guy.play(anim)
+    guy.move(guy.x(), bottom - guy.height())  # keep his feet on the taskbar
+
+
+def wander(guy, speed=60, rest_s=(1, 3), min_walk=120, wave_chance=0.25):
+    """Walk to a random spot along the taskbar, rest a bit, repeat.
+
+    He walks with the plain frames and waves for a loop only now and then.
+    """
+    state = {"x": 0.0, "target": 0.0, "last": 0.0, "resume": None, "dir": "left"}
+    waving = {d: load_frames(f"walking-{d}") for d in ("left", "right")}
+    plain = {d: load_frames(f"walking-{d}-plain") for d in ("left", "right")}
+    mover = QTimer(guy)
+
+    def on_frame():
+        # at the start of each walk loop, sometimes swap in the waving frames
+        if guy.walking and guy.index == 0:
+            d = state["dir"]
+            guy.frames = waving[d] if random.random() < wave_chance else plain[d]
+
+    def rest():
+        QTimer.singleShot(int(random.uniform(*rest_s) * 1000), start_walk)
+
+    def start_walk():
+        if not guy.timer.isActive():
+            # eyes are following the cursor; wait until he's back to idling
+            QTimer.singleShot(500, start_walk)
+            return
+        area = QApplication.primaryScreen().availableGeometry()
+        lo, hi = area.left(), area.right() - guy.width()
+        spots = [x for x in (random.uniform(lo, hi) for _ in range(20)) if abs(x - guy.x()) >= min_walk]
+        target = spots[0] if spots else (lo if guy.x() - lo > hi - guy.x() else hi)
+
+        direction = "right" if target > guy.x() else "left"
+        state.update(x=float(guy.x()), target=target, last=time.monotonic(), resume=guy.anim, dir=direction)
+        guy.walking = True
+        play_grounded(guy, f"walking-{direction}-plain")
+        mover.start(16)
+
+    def step():
+        now = time.monotonic()
+        dist = speed * (now - state["last"])
+        state["last"] = now
+        gap = state["target"] - state["x"]
+        if abs(gap) <= dist:
+            guy.move(round(state["target"]), guy.y())
+            mover.stop()
+            guy.walking = False
+            play_grounded(guy, state["resume"])
+            rest()
+            return
+        state["x"] += math.copysign(dist, gap)
+        guy.move(round(state["x"]), guy.y())
+
+    mover.timeout.connect(step)
+    guy.timer.timeout.connect(on_frame)
+    rest()
+    return mover
+
+
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     app = QApplication(sys.argv)
     guy = LittleGuy()
     cycle_idles(guy)
     follow_cursor(guy)
+    wander(guy)
     guy.show()
     sys.exit(app.exec())
