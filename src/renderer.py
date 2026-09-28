@@ -13,9 +13,10 @@ from pixl_link import enable_pixl
 
 anims = ["idle", "idle-2", "walking-left", "walking-right", "jump"]
 
+SIDES = ["right", "bottom-right", "bottom", "bottom-left", "left", "top-left", "top", "top-right"]
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
 SIZE = 72
-FPS = {"idle-2": 6, "sleep": 6, "wake": 8, "walking-left": 7, "walking-right": 7, "walking-left-plain": 7, "walking-right-plain": 7}  # anything not listed plays at DEFAULT_FPS
+FPS = {"idle-2": 6, "sleep": 6, "wake": 8, "walking-left": 7, "walking-right": 7, "walking-left-plain": 7, "walking-right-plain": 7}
 DEFAULT_FPS = 10
 
 
@@ -31,7 +32,7 @@ def load_frames(anim):
     images = [QImage(str(p)) for p in sorted((ASSETS / anim).glob("frame-*.png"))]
     if not images:
         return []
-    # crop the shared transparent strip at the bottom so his feet sit on the taskbar
+
     bottom = max(lowest_opaque_row(img) for img in images)
     return [
         QPixmap.fromImage(img.copy(0, 0, img.width(), bottom + 1)).scaledToWidth(
@@ -51,8 +52,8 @@ class LittleGuy(QLabel):
         self.index = 0
         self.anim = None
         self.walking = False
-        self.held = False  # being dragged or falling
-        self.sleeping = False  # dozing off, asleep, or waking up
+        self.held = False
+        self.sleeping = False
         self.wake_resume = None
         self.loop = True
         self.then = None
@@ -66,7 +67,6 @@ class LittleGuy(QLabel):
         self.move(area.right() - self.width() - 50, area.bottom() - self.height() + 1)
 
     def play(self, anim, loop=True, then=None):
-        """Play anim; with loop=False hold the last frame and call then() once it's reached."""
         frames = load_frames(anim)
         if not frames:
             return
@@ -84,7 +84,6 @@ class LittleGuy(QLabel):
             self.timer.stop()
             then, self.then = self.then, None
             if then:
-                # after this tick, so other timeout handlers don't see the next anim's frame 0
                 QTimer.singleShot(0, then)
             return
         self.index = (self.index + 1) % len(self.frames)
@@ -95,7 +94,7 @@ class LittleGuy(QLabel):
             return
         self.sleeping = True
         self.wake_resume = self.anim
-        play_grounded(self, "sleep", loop=False)  # holds on the eyes-shut frame
+        play_grounded(self, "sleep", loop=False)
 
     def wake(self, instant=False):
         if not self.sleeping:
@@ -120,11 +119,9 @@ class LittleGuy(QLabel):
 
 
 def cycle_idles(guy, anims=("idle-2", "idle"), every_loops=5):
-    """Alternate between idle animations after each one plays every_loops full loops."""
     state = {"current": 0, "loops": 0}
 
     def on_frame():
-        # index just wrapped to 0: one full loop finished
         if guy.walking or guy.sleeping or guy.index != 0:
             return
         state["loops"] += 1
@@ -134,14 +131,9 @@ def cycle_idles(guy, anims=("idle-2", "idle"), every_loops=5):
         state["current"] = (state["current"] + 1) % len(anims)
         bottom = guy.y() + guy.height()
         guy.play(anims[state["current"]])
-        guy.move(guy.x(), bottom - guy.height())  # keep his feet on the taskbar
+        guy.move(guy.x(), bottom - guy.height())
 
     guy.timer.timeout.connect(on_frame)
-
-
-# clockwise from pointing right (screen y grows downward)
-SIDES = ["right", "bottom-right", "bottom", "bottom-left", "left", "top-left", "top", "top-right"]
-
 
 def load_sides():
     names = SIDES + ["center"]
@@ -156,7 +148,6 @@ def load_sides():
 
 
 def follow_cursor(guy, still_ms=1500, dead_zone=40):
-    """While the cursor moves, pause the idle animation and look toward it."""
     sides = load_sides()
     state = {"last": QCursor.pos(), "still_for": 0, "following": False, "side": None}
     poll_ms = 30
@@ -169,14 +160,13 @@ def follow_cursor(guy, still_ms=1500, dead_zone=40):
     def poll():
         pos = QCursor.pos()
         if guy.walking or guy.held or guy.sleeping:
-            state["last"] = pos  # only look around while standing still and awake
+            state["last"] = pos
             state["following"] = False
             state["side"] = None
             return
         if pos == state["last"]:
             state["still_for"] += poll_ms
             if state["following"] and state["still_for"] >= still_ms:
-                # cursor stopped: go back to the idle animation where it paused
                 state["following"] = False
                 state["side"] = None
                 guy.setPixmap(guy.frames[guy.index])
@@ -205,21 +195,16 @@ def follow_cursor(guy, still_ms=1500, dead_zone=40):
 def play_grounded(guy, anim, **kwargs):
     bottom = guy.y() + guy.height()
     guy.play(anim, **kwargs)
-    guy.move(guy.x(), bottom - guy.height())  # keep his feet on the taskbar
+    guy.move(guy.x(), bottom - guy.height())
 
 
 def wander(guy, speed=60, rest_s=(1, 3), min_walk=120, wave_chance=0.25):
-    """Walk to a random spot along the taskbar, rest a bit, repeat.
-
-    He walks with the plain frames and waves for a loop only now and then.
-    """
     state = {"x": 0.0, "target": 0.0, "last": 0.0, "resume": None, "dir": "left"}
     waving = {d: load_frames(f"walking-{d}") for d in ("left", "right")}
     plain = {d: load_frames(f"walking-{d}-plain") for d in ("left", "right")}
     mover = QTimer(guy)
 
     def on_frame():
-        # at the start of each walk loop, sometimes swap in the waving frames
         if guy.walking and guy.index == 0:
             d = state["dir"]
             guy.frames = waving[d] if random.random() < wave_chance else plain[d]
@@ -248,7 +233,6 @@ def wander(guy, speed=60, rest_s=(1, 3), min_walk=120, wave_chance=0.25):
 
     def step():
         if not guy.walking:
-            # walk was cancelled (he got picked up)
             mover.stop()
             rest()
             return
@@ -273,7 +257,6 @@ def wander(guy, speed=60, rest_s=(1, 3), min_walk=120, wave_chance=0.25):
 
 
 def nap(guy, after_s=60, poll_ms=250):
-    """Doze off once the cursor has sat still for after_s; wake up when it moves again."""
     state = {"last": QCursor.pos(), "still_since": time.monotonic()}
 
     def poll():
@@ -292,16 +275,14 @@ def nap(guy, after_s=60, poll_ms=250):
 
 
 class Dragger(QObject):
-    """Pick him up with the left mouse button; let go and he falls to the taskbar."""
-
-    GRAVITY = 2600  # px/s^2
-    BOUNCE = 0.25  # fraction of landing speed kept for the bounce
-    MIN_BOUNCE = 500  # px/s; softer landings just stop
+    GRAVITY = 2600
+    BOUNCE = 0.25
+    MIN_BOUNCE = 500
 
     def __init__(self, guy):
         super().__init__(guy)
         self.guy = guy
-        self.pose = load_sides()["bottom"]  # looks down while dangling
+        self.pose = load_sides()["bottom"]
         self.grab = QPoint()
         self.y = 0.0
         self.vy = 0.0
