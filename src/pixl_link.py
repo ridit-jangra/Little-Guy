@@ -245,6 +245,7 @@ class PixlLink(QObject):
         title = str(event.get("title") or "")
         if not title:
             return
+        self.guy.wake()
         project = event.get("project")
         line = f"{ICONS.get(event.get('kind'), '📦')} {title}"
         self.bubble.say(f"{line}\n{project}" if project else line)

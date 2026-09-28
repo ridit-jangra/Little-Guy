@@ -15,7 +15,7 @@ anims = ["idle", "idle-2", "walking-left", "walking-right", "jump"]
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
 SIZE = 72
-FPS = {"idle-2": 6, "walking-left": 7, "walking-right": 7, "walking-left-plain": 7, "walking-right-plain": 7}  # anything not listed plays at DEFAULT_FPS
+FPS = {"idle-2": 6, "sleep": 6, "wake": 8, "walking-left": 7, "walking-right": 7, "walking-left-plain": 7, "walking-right-plain": 7}  # anything not listed plays at DEFAULT_FPS
 DEFAULT_FPS = 10
 
 
@@ -52,6 +52,10 @@ class LittleGuy(QLabel):
         self.anim = None
         self.walking = False
         self.held = False  # being dragged or falling
+        self.sleeping = False  # dozing off, asleep, or waking up
+        self.wake_resume = None
+        self.loop = True
+        self.then = None
         self.walk_resume = None
         self.menu_hooks = []
         self.timer = QTimer(self)
@@ -61,20 +65,51 @@ class LittleGuy(QLabel):
         area = QApplication.primaryScreen().availableGeometry()
         self.move(area.right() - self.width() - 50, area.bottom() - self.height() + 1)
 
-    def play(self, anim):
+    def play(self, anim, loop=True, then=None):
+        """Play anim; with loop=False hold the last frame and call then() once it's reached."""
         frames = load_frames(anim)
         if not frames:
             return
         self.frames = frames
         self.index = 0
         self.anim = anim
+        self.loop = loop
+        self.then = then
         self.setPixmap(self.frames[0])
         self.resize(self.frames[0].size())
         self.timer.start(1000 // FPS.get(anim, DEFAULT_FPS))
 
     def next_frame(self):
+        if not self.loop and self.index == len(self.frames) - 1:
+            self.timer.stop()
+            then, self.then = self.then, None
+            if then:
+                # after this tick, so other timeout handlers don't see the next anim's frame 0
+                QTimer.singleShot(0, then)
+            return
         self.index = (self.index + 1) % len(self.frames)
         self.setPixmap(self.frames[self.index])
+
+    def sleep(self):
+        if self.sleeping:
+            return
+        self.sleeping = True
+        self.wake_resume = self.anim
+        play_grounded(self, "sleep", loop=False)  # holds on the eyes-shut frame
+
+    def wake(self, instant=False):
+        if not self.sleeping:
+            return
+        if instant:
+            self.sleeping = False
+            self.play(self.wake_resume)
+            return
+        if self.anim != "wake":
+            play_grounded(self, "wake", loop=False, then=self.woke)
+
+    def woke(self):
+        self.sleeping = False
+        play_grounded(self, self.wake_resume)
 
     def contextMenuEvent(self, event):
         menu = QMenu(self)
@@ -90,7 +125,7 @@ def cycle_idles(guy, anims=("idle-2", "idle"), every_loops=5):
 
     def on_frame():
         # index just wrapped to 0: one full loop finished
-        if guy.walking or guy.index != 0:
+        if guy.walking or guy.sleeping or guy.index != 0:
             return
         state["loops"] += 1
         if state["loops"] < every_loops:
@@ -133,8 +168,8 @@ def follow_cursor(guy, still_ms=1500, dead_zone=40):
 
     def poll():
         pos = QCursor.pos()
-        if guy.walking or guy.held:
-            state["last"] = pos  # only look around while standing still
+        if guy.walking or guy.held or guy.sleeping:
+            state["last"] = pos  # only look around while standing still and awake
             state["following"] = False
             state["side"] = None
             return
@@ -167,9 +202,9 @@ def follow_cursor(guy, still_ms=1500, dead_zone=40):
     return poller
 
 
-def play_grounded(guy, anim):
+def play_grounded(guy, anim, **kwargs):
     bottom = guy.y() + guy.height()
-    guy.play(anim)
+    guy.play(anim, **kwargs)
     guy.move(guy.x(), bottom - guy.height())  # keep his feet on the taskbar
 
 
@@ -193,6 +228,9 @@ def wander(guy, speed=60, rest_s=(1, 3), min_walk=120, wave_chance=0.25):
         QTimer.singleShot(int(random.uniform(*rest_s) * 1000), start_walk)
 
     def start_walk():
+        if guy.sleeping:
+            rest()
+            return
         if guy.held:
             QTimer.singleShot(500, start_walk)
             return
@@ -234,6 +272,25 @@ def wander(guy, speed=60, rest_s=(1, 3), min_walk=120, wave_chance=0.25):
     return mover
 
 
+def nap(guy, after_s=60, poll_ms=250):
+    """Doze off once the cursor has sat still for after_s; wake up when it moves again."""
+    state = {"last": QCursor.pos(), "still_since": time.monotonic()}
+
+    def poll():
+        pos = QCursor.pos()
+        now = time.monotonic()
+        if pos != state["last"]:
+            state["last"], state["still_since"] = pos, now
+            guy.wake()
+        elif not (guy.sleeping or guy.walking or guy.held) and now - state["still_since"] >= after_s:
+            guy.sleep()
+
+    poller = QTimer(guy)
+    poller.timeout.connect(poll)
+    poller.start(poll_ms)
+    return poller
+
+
 class Dragger(QObject):
     """Pick him up with the left mouse button; let go and he falls to the taskbar."""
 
@@ -269,6 +326,7 @@ class Dragger(QObject):
     def pick_up(self, pos):
         guy = self.guy
         self.faller.stop()
+        guy.wake(instant=True)
         if guy.walking:
             guy.walking = False
             guy.play(guy.walk_resume)
@@ -318,6 +376,7 @@ if __name__ == "__main__":
     cycle_idles(guy)
     follow_cursor(guy)
     wander(guy)
+    nap(guy)
     enable_drag(guy)
     link = enable_pixl(guy)
     guy.show()
