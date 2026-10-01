@@ -1,5 +1,6 @@
 import signal
 import sys
+import time
 
 from PySide6.QtWidgets import QApplication
 
@@ -11,6 +12,7 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     guy = LittleGuy()
     guy.play("spawn", False)
+    time.sleep(0.4)
     cycle_idles(guy)
     follow_cursor(guy)
     wander(guy)

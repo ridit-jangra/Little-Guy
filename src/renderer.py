@@ -7,7 +7,7 @@ from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtGui import QCursor, QImage, QPixmap
 from PySide6.QtWidgets import QApplication, QLabel, QMenu
 
-anims = ["idle", "idle-2", "walking-left", "walking-right", "jump", "spawn"]
+anims = ["idle", "idle-2", "walking-left", "walking-right", "jump", "spawn", "yawn"]
 
 SIDES = ["right", "bottom-right", "bottom", "bottom-left", "left", "top-left", "top", "top-right"]
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
