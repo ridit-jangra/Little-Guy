@@ -1,5 +1,6 @@
 import math
 import random
+import sys
 import time
 from pathlib import Path
 
@@ -10,7 +11,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QMenu
 anims = ["idle", "idle-2", "walking-left", "walking-right", "jump", "spawn", "yawn"]
 
 SIDES = ["right", "bottom-right", "bottom", "bottom-left", "left", "top-left", "top", "top-right"]
-ASSETS = Path(__file__).resolve().parent.parent / "assets"
+ASSETS = (Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).resolve().parent.parent) / "assets"
 SIZE = 72
 FPS = {"idle-2": 6, "sleep": 6, "wake": 8, "walking-left": 7, "walking-right": 7, "walking-left-plain": 7, "walking-right-plain": 7}
 DEFAULT_FPS = 10

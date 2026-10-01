@@ -25,15 +25,11 @@ jobs:
         run: |
           pyinstaller build.spec
       
-      - name: Create archive
-        run: |
-          Compress-Archive -Path dist/LittleGuy -DestinationPath LittleGuy-Windows.zip
-      
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: LittleGuy-Windows
-          path: LittleGuy-Windows.zip
+          path: dist/LittleGuy.exe
 
   build-linux:
     runs-on: ubuntu-latest
@@ -58,16 +54,14 @@ jobs:
         run: |
           pyinstaller build.spec
       
-      - name: Create archive
-        run: |
-          cd dist
-          tar -czf ../LittleGuy-Linux.tar.gz LittleGuy
+      - name: Rename executable
+        run: mv dist/LittleGuy dist/LittleGuy-Linux
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: LittleGuy-Linux
-          path: LittleGuy-Linux.tar.gz
+          path: dist/LittleGuy-Linux
 
   release:
     needs: [build-windows, build-linux]
@@ -90,7 +84,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            LittleGuy-Windows.zip
-            LittleGuy-Linux.tar.gz
+            LittleGuy.exe
+            LittleGuy-Linux
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
