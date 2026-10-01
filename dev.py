@@ -16,7 +16,7 @@ class CodeAndFrames(DefaultFilter):
 
 def run_renderer():
     sys.path.insert(0, str(SRC))
-    runpy.run_path(str(SRC / "renderer.py"), run_name="__main__")
+    runpy.run_path(str(SRC / "main.py"), run_name="__main__")
 
 if __name__ == "__main__":
     run_process(SRC, ASSETS, target=run_renderer, watch_filter=CodeAndFrames())

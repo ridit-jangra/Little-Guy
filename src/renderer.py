@@ -1,17 +1,13 @@
 import math
 import random
-import signal
 import time
-import sys
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
+from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtGui import QCursor, QImage, QPixmap
 from PySide6.QtWidgets import QApplication, QLabel, QMenu
 
-from pixl_link import enable_pixl
-
-anims = ["idle", "idle-2", "walking-left", "walking-right", "jump"]
+anims = ["idle", "idle-2", "walking-left", "walking-right", "jump", "spawn"]
 
 SIDES = ["right", "bottom-right", "bottom", "bottom-left", "left", "top-left", "top", "top-right"]
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
@@ -93,7 +89,8 @@ class LittleGuy(QLabel):
         if self.sleeping:
             return
         self.sleeping = True
-        self.wake_resume = self.anim
+        self.wake_resume = self.walk_resume if self.walking else self.anim
+        self.walking = False
         play_grounded(self, "sleep", loop=False)
 
     def wake(self, instant=False):
@@ -116,7 +113,6 @@ class LittleGuy(QLabel):
             hook(menu)
         menu.addAction("Quit", QApplication.quit)
         menu.exec(event.globalPos())
-
 
 def cycle_idles(guy, anims=("idle-2", "idle"), every_loops=5):
     state = {"current": 0, "loops": 0}
@@ -265,100 +261,10 @@ def nap(guy, after_s=60, poll_ms=250):
         if pos != state["last"]:
             state["last"], state["still_since"] = pos, now
             guy.wake()
-        elif not (guy.sleeping or guy.walking or guy.held) and now - state["still_since"] >= after_s:
+        elif not (guy.sleeping or guy.held) and now - state["still_since"] >= after_s:
             guy.sleep()
 
     poller = QTimer(guy)
     poller.timeout.connect(poll)
     poller.start(poll_ms)
     return poller
-
-
-class Dragger(QObject):
-    GRAVITY = 2600
-    BOUNCE = 0.25
-    MIN_BOUNCE = 500
-
-    def __init__(self, guy):
-        super().__init__(guy)
-        self.guy = guy
-        self.pose = load_sides()["bottom"]
-        self.grab = QPoint()
-        self.y = 0.0
-        self.vy = 0.0
-        self.last = 0.0
-        self.faller = QTimer(self)
-        self.faller.timeout.connect(self.fall)
-        guy.installEventFilter(self)
-
-    def eventFilter(self, obj, event):
-        t = event.type()
-        if t == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
-            self.pick_up(event.globalPosition().toPoint())
-            return True
-        if t == QEvent.Type.MouseMove and self.guy.held and not self.faller.isActive():
-            self.guy.move(event.globalPosition().toPoint() - self.grab)
-            return True
-        if t == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton and self.guy.held:
-            self.drop()
-            return True
-        return False
-
-    def pick_up(self, pos):
-        guy = self.guy
-        self.faller.stop()
-        guy.wake(instant=True)
-        if guy.walking:
-            guy.walking = False
-            guy.play(guy.walk_resume)
-        guy.held = True
-        guy.timer.stop()
-        guy.setPixmap(self.pose)
-        guy.setCursor(Qt.CursorShape.ClosedHandCursor)
-        self.grab = pos - guy.pos()
-
-    def drop(self):
-        self.guy.unsetCursor()
-        area = QApplication.primaryScreen().availableGeometry()
-        x = min(max(self.guy.x(), area.left()), area.right() - self.guy.width())
-        self.guy.move(x, self.guy.y())
-        self.y, self.vy, self.last = float(self.guy.y()), 0.0, time.monotonic()
-        self.faller.start(16)
-
-    def fall(self):
-        guy = self.guy
-        now = time.monotonic()
-        dt, self.last = now - self.last, now
-        ground = QApplication.primaryScreen().availableGeometry().bottom() + 1 - guy.height()
-        self.vy += self.GRAVITY * dt
-        self.y += self.vy * dt
-        if self.y >= ground:
-            self.y = ground
-            if self.vy > self.MIN_BOUNCE:
-                self.vy = -self.vy * self.BOUNCE
-            else:
-                self.faller.stop()
-                guy.move(guy.x(), round(ground))
-                guy.held = False
-                guy.setPixmap(guy.frames[guy.index])
-                guy.timer.start()
-                return
-        guy.move(guy.x(), round(self.y))
-
-
-def enable_drag(guy):
-    return Dragger(guy)
-
-
-if __name__ == "__main__":
-    signal.signal(signal.SIGINT, signal.SIG_DFL)
-    app = QApplication(sys.argv)
-    guy = LittleGuy()
-    cycle_idles(guy)
-    follow_cursor(guy)
-    wander(guy)
-    nap(guy)
-    enable_drag(guy)
-    link = enable_pixl(guy)
-    guy.show()
-    sys.exit(app.exec())
