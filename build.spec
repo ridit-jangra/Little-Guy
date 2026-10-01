@@ -15,7 +15,6 @@ a = Analysis(
         (str(assets_path), 'assets'),
         (str(server_path), 'server'),
         (str(tools_path), 'tools'),
-        (str(root / '.mcp.json'), '.'),
     ],
     hiddenimports=[
         'PySide6.QtCore',
