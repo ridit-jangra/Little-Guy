@@ -25,11 +25,24 @@ jobs:
         run: |
           pyinstaller build.spec
       
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          if ($version -notmatch '^\d+(\.\d+)*$') { $version = '0.0.0' }
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) { choco install innosetup -y --no-progress }
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc "/DAppVersion=$version" installer/LittleGuy.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: LittleGuy-Windows
-          path: dist/LittleGuy.exe
+          path: |
+            dist/LittleGuy.exe
+            dist/LittleGuy-Setup.exe
 
   build-linux:
     runs-on: ubuntu-latest
@@ -85,6 +98,7 @@ jobs:
         with:
           files: |
             LittleGuy.exe
+            LittleGuy-Setup.exe
             LittleGuy-Linux
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
