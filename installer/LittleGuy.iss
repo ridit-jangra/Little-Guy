@@ -23,7 +23,7 @@ UninstallDisplayIcon={app}\LittleGuy.exe
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
-Name: "startup"; Description: "Start Little Guy when I sign in"; GroupDescription: "Startup:"; Flags: unchecked
+Name: "startup"; Description: "Start Little Guy when I sign in"; GroupDescription: "Startup:"
 
 [Files]
 Source: "..\dist\LittleGuy.exe"; DestDir: "{app}"; Flags: ignoreversion

@@ -1,20 +1,20 @@
-import math
-import random
-import sys
-import time
-from pathlib import Path
-
-from PySide6.QtCore import QPoint, Qt, QTimer
-from PySide6.QtGui import QCursor, QImage, QPixmap
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QApplication, QLabel, QMenu
 
-anims = ["idle", "idle-2", "walking-left", "walking-right", "jump", "spawn", "yawn"]
+from src.paths import ASSETS
 
-SIDES = ["right", "bottom-right", "bottom", "bottom-left", "left", "top-left", "top", "top-right"]
-ASSETS = (Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).resolve().parent.parent) / "assets"
 SIZE = 72
-FPS = {"idle-2": 6, "sleep": 6, "wake": 8, "walking-left": 7, "walking-right": 7, "walking-left-plain": 7, "walking-right-plain": 7}
 DEFAULT_FPS = 10
+FPS = {
+    "idle-2": 6,
+    "sleep": 6,
+    "wake": 8,
+    "walking-left": 7,
+    "walking-right": 7,
+    "walking-left-plain": 7,
+    "walking-right-plain": 7,
+}
 
 
 def lowest_opaque_row(image):
@@ -25,18 +25,24 @@ def lowest_opaque_row(image):
     return image.height() - 1
 
 
+def scale_to_guy(image, bottom):
+    cropped = image.copy(0, 0, image.width(), bottom + 1)
+    return QPixmap.fromImage(cropped).scaledToWidth(SIZE, Qt.TransformationMode.SmoothTransformation)
+
+
 def load_frames(anim):
-    images = [QImage(str(p)) for p in sorted((ASSETS / anim).glob("frame-*.png"))]
+    images = [QImage(str(path)) for path in sorted((ASSETS / anim).glob("frame-*.png"))]
     if not images:
         return []
 
-    bottom = max(lowest_opaque_row(img) for img in images)
-    return [
-        QPixmap.fromImage(img.copy(0, 0, img.width(), bottom + 1)).scaledToWidth(
-            SIZE, Qt.TransformationMode.SmoothTransformation
-        )
-        for img in images
-    ]
+    bottom = max(lowest_opaque_row(image) for image in images)
+    return [scale_to_guy(image, bottom) for image in images]
+
+
+def play_grounded(guy, anim, **kwargs):
+    bottom = guy.y() + guy.height()
+    guy.play(anim, **kwargs)
+    guy.move(guy.x(), bottom - guy.height())
 
 
 class LittleGuy(QLabel):
@@ -48,14 +54,15 @@ class LittleGuy(QLabel):
         self.frames = []
         self.index = 0
         self.anim = None
+        self.loop = True
+        self.then = None
         self.walking = False
+        self.walk_resume = None
         self.held = False
         self.sleeping = False
         self.wake_resume = None
-        self.loop = True
-        self.then = None
-        self.walk_resume = None
         self.menu_hooks = []
+
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.next_frame)
         self.play(anim)
@@ -67,6 +74,7 @@ class LittleGuy(QLabel):
         frames = load_frames(anim)
         if not frames:
             return
+
         self.frames = frames
         self.index = 0
         self.anim = anim
@@ -77,18 +85,21 @@ class LittleGuy(QLabel):
         self.timer.start(1000 // FPS.get(anim, DEFAULT_FPS))
 
     def next_frame(self):
-        if not self.loop and self.index == len(self.frames) - 1:
+        at_last_frame = self.index == len(self.frames) - 1
+        if not self.loop and at_last_frame:
             self.timer.stop()
             then, self.then = self.then, None
             if then:
                 QTimer.singleShot(0, then)
             return
+
         self.index = (self.index + 1) % len(self.frames)
         self.setPixmap(self.frames[self.index])
 
     def sleep(self):
         if self.sleeping:
             return
+
         self.sleeping = True
         self.wake_resume = self.walk_resume if self.walking else self.anim
         self.walking = False
@@ -97,11 +108,11 @@ class LittleGuy(QLabel):
     def wake(self, instant=False):
         if not self.sleeping:
             return
+
         if instant:
             self.sleeping = False
             self.play(self.wake_resume)
-            return
-        if self.anim != "wake":
+        elif self.anim != "wake":
             play_grounded(self, "wake", loop=False, then=self.woke)
 
     def woke(self):
@@ -114,158 +125,3 @@ class LittleGuy(QLabel):
             hook(menu)
         menu.addAction("Quit", QApplication.quit)
         menu.exec(event.globalPos())
-
-def cycle_idles(guy, anims=("idle-2", "idle"), every_loops=5):
-    state = {"current": 0, "loops": 0}
-
-    def on_frame():
-        if guy.walking or guy.sleeping or guy.index != 0:
-            return
-        state["loops"] += 1
-        if state["loops"] < every_loops:
-            return
-        state["loops"] = 0
-        state["current"] = (state["current"] + 1) % len(anims)
-        bottom = guy.y() + guy.height()
-        guy.play(anims[state["current"]])
-        guy.move(guy.x(), bottom - guy.height())
-
-    guy.timer.timeout.connect(on_frame)
-
-def load_sides():
-    names = SIDES + ["center"]
-    images = {name: QImage(str(ASSETS / "sides" / f"{name}.png")) for name in names}
-    bottom = max(lowest_opaque_row(img) for img in images.values())
-    return {
-        name: QPixmap.fromImage(img.copy(0, 0, img.width(), bottom + 1)).scaledToWidth(
-            SIZE, Qt.TransformationMode.SmoothTransformation
-        )
-        for name, img in images.items()
-    }
-
-
-def follow_cursor(guy, still_ms=1500, dead_zone=40):
-    sides = load_sides()
-    state = {"last": QCursor.pos(), "still_for": 0, "following": False, "side": None}
-    poll_ms = 30
-
-    def look(side):
-        if side != state["side"]:
-            state["side"] = side
-            guy.setPixmap(sides[side])
-
-    def poll():
-        pos = QCursor.pos()
-        if guy.walking or guy.held or guy.sleeping:
-            state["last"] = pos
-            state["following"] = False
-            state["side"] = None
-            return
-        if pos == state["last"]:
-            state["still_for"] += poll_ms
-            if state["following"] and state["still_for"] >= still_ms:
-                state["following"] = False
-                state["side"] = None
-                guy.setPixmap(guy.frames[guy.index])
-                guy.timer.start()
-            return
-
-        state["last"] = pos
-        state["still_for"] = 0
-        if not state["following"]:
-            state["following"] = True
-            guy.timer.stop()
-
-        eyes = guy.mapToGlobal(QPoint(guy.width() // 2, guy.height() // 3))
-        dx, dy = pos.x() - eyes.x(), pos.y() - eyes.y()
-        if math.hypot(dx, dy) < dead_zone:
-            look("center")
-        else:
-            look(SIDES[round(math.degrees(math.atan2(dy, dx)) / 45) % 8])
-
-    poller = QTimer(guy)
-    poller.timeout.connect(poll)
-    poller.start(poll_ms)
-    return poller
-
-
-def play_grounded(guy, anim, **kwargs):
-    bottom = guy.y() + guy.height()
-    guy.play(anim, **kwargs)
-    guy.move(guy.x(), bottom - guy.height())
-
-
-def wander(guy, speed=60, rest_s=(1, 3), min_walk=120, wave_chance=0.25):
-    state = {"x": 0.0, "target": 0.0, "last": 0.0, "resume": None, "dir": "left"}
-    waving = {d: load_frames(f"walking-{d}") for d in ("left", "right")}
-    plain = {d: load_frames(f"walking-{d}-plain") for d in ("left", "right")}
-    mover = QTimer(guy)
-
-    def on_frame():
-        if guy.walking and guy.index == 0:
-            d = state["dir"]
-            guy.frames = waving[d] if random.random() < wave_chance else plain[d]
-
-    def rest():
-        QTimer.singleShot(int(random.uniform(*rest_s) * 1000), start_walk)
-
-    def start_walk():
-        if guy.sleeping:
-            rest()
-            return
-        if guy.held:
-            QTimer.singleShot(500, start_walk)
-            return
-        area = QApplication.primaryScreen().availableGeometry()
-        lo, hi = area.left(), area.right() - guy.width()
-        spots = [x for x in (random.uniform(lo, hi) for _ in range(20)) if abs(x - guy.x()) >= min_walk]
-        target = spots[0] if spots else (lo if guy.x() - lo > hi - guy.x() else hi)
-
-        direction = "right" if target > guy.x() else "left"
-        state.update(x=float(guy.x()), target=target, last=time.monotonic(), resume=guy.anim, dir=direction)
-        guy.walking = True
-        guy.walk_resume = guy.anim
-        play_grounded(guy, f"walking-{direction}-plain")
-        mover.start(16)
-
-    def step():
-        if not guy.walking:
-            mover.stop()
-            rest()
-            return
-        now = time.monotonic()
-        dist = speed * (now - state["last"])
-        state["last"] = now
-        gap = state["target"] - state["x"]
-        if abs(gap) <= dist:
-            guy.move(round(state["target"]), guy.y())
-            mover.stop()
-            guy.walking = False
-            play_grounded(guy, state["resume"])
-            rest()
-            return
-        state["x"] += math.copysign(dist, gap)
-        guy.move(round(state["x"]), guy.y())
-
-    mover.timeout.connect(step)
-    guy.timer.timeout.connect(on_frame)
-    rest()
-    return mover
-
-
-def nap(guy, after_s=60, poll_ms=250):
-    state = {"last": QCursor.pos(), "still_since": time.monotonic()}
-
-    def poll():
-        pos = QCursor.pos()
-        now = time.monotonic()
-        if pos != state["last"]:
-            state["last"], state["still_since"] = pos, now
-            guy.wake()
-        elif not (guy.sleeping or guy.held) and now - state["still_since"] >= after_s:
-            guy.sleep()
-
-    poller = QTimer(guy)
-    poller.timeout.connect(poll)
-    poller.start(poll_ms)
-    return poller

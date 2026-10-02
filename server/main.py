@@ -9,6 +9,7 @@ import secrets
 import sqlite3
 import time
 from pathlib import Path
+from string import Template
 from urllib.parse import urlencode
 
 import aiohttp
@@ -22,6 +23,8 @@ PUBLIC_URL = os.environ["PUBLIC_URL"].rstrip("/")
 PIXL_API_KEYS = [k.strip().encode() for k in os.environ["PIXL_API_KEY"].split(",") if k.strip()]
 PORT = int(os.environ.get("PORT", "8080"))
 DB_PATH = Path(os.environ.get("DB_PATH", Path(__file__).resolve().parent / "littleguy.db"))
+
+TEMPLATES = Path(__file__).resolve().parent / "templates"
 
 CLIENT_PORT = 47831
 LOGIN_TTL = 10 * 60
@@ -87,11 +90,8 @@ def prune(now: float):
 
 
 def page(title: str, message: str, status: int = 200) -> web.Response:
-    html = (
-        "<!doctype html><meta charset=utf-8><title>Little Guy</title>"
-        '<body style="font-family:sans-serif;text-align:center;margin-top:4rem">'
-        f"<h2>{title}</h2><p>{message}</p></body>"
-    )
+    template = Template((TEMPLATES / "message.html").read_text(encoding="utf-8"))
+    html = template.substitute(title=title, message=message)
     return web.Response(text=html, content_type="text/html", status=status)
 
 

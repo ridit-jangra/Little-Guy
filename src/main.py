@@ -1,22 +1,22 @@
 import signal
 import sys
-import time
 
 from PySide6.QtWidgets import QApplication
 
+from src.brain import Brain
 from src.connectors.pixl import enable_pixl
-from src.renderer import LittleGuy, cycle_idles, follow_cursor, nap, wander
+from src.cursor import CursorFollower
+from src.renderer import LittleGuy
 
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     app = QApplication(sys.argv)
+
     guy = LittleGuy()
-    guy.play("spawn", False)
-    time.sleep(0.4)
-    cycle_idles(guy)
-    follow_cursor(guy)
-    wander(guy)
-    nap(guy)
-    link = enable_pixl(guy)
+    brain = Brain(guy)
+    follower = CursorFollower(guy)
+    pixl = enable_pixl(guy)
+
+    guy.play("spawn", False, then=brain.finish)
     guy.show()
     sys.exit(app.exec())
