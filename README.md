@@ -1,6 +1,7 @@
 # Little Guy
 Little guy is a cute pet that lives in your taskbar, it can connect with other programs like pixl, and many other coming soon!
 It naps, wander, waves and follows your mouse 🤩
+![](assets/demo.webp)
 
 You can play games with it (soon to be added) like Tic Tac Toe, and other fun mini games.
 
